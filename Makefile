@@ -1,79 +1,88 @@
-# Binaries we use
+MOD = dagre-d3
+
 NODE = node
 NPM = npm
-
 BROWSERIFY = ./node_modules/browserify/bin/cmd.js
+ISTANBUL = ./node_modules/istanbul/lib/cli.js
 JSHINT = ./node_modules/jshint/bin/jshint
+JSCS = ./node_modules/jscs/bin/jscs
+KARMA = ./node_modules/karma/bin/karma
 MOCHA = ./node_modules/mocha/bin/_mocha
-PHANTOMJS = ./node_modules/phantomjs/bin/phantomjs
+PHANTOMJS = ./node_modules/phantomjs-prebuilt/bin/phantomjs
 UGLIFY = ./node_modules/uglify-js/bin/uglifyjs
 
-# Module def
-MODULE = dagre-d3
-MODULE_JS = $(MODULE).js
-MODULE_MIN_JS = $(MODULE).min.js
+ISTANBUL_OPTS = --dir $(COVERAGE_DIR) --report html
+JSHINT_OPTS = --reporter node_modules/jshint-stylish/stylish.js
+MOCHA_OPTS = -R dot
 
-# Various files
+BUILD_DIR = build
+COVERAGE_DIR = $(BUILD_DIR)/cov
+DIST_DIR = dist
+
+DEMO_FILES = $(shell find demo -type f)
 SRC_FILES = index.js lib/version.js $(shell find lib -type f -name '*.js')
+BUILD_FILES = $(addprefix $(BUILD_DIR)/dist/, \
+		$(MOD).js $(MOD).min.js \
+		$(MOD).core.js $(MOD).core.min.js \
+		$(DEMO_FILES))
 
-DEMO_FILES = $(wildcard demo/*)
-DEMO_BUILD_FILES = $(addprefix build/, $(DEMO_FILES))
+DIRS = $(BUILD_DIR) $(BUILD_DIR)/dist $(BUILD_DIR)/dist/demo
 
-TEST_COV = build/coverage
+.PHONY: all clean browser-test demo-test test dist
 
-# Targets
-.PHONY: = all test demo-test lint release clean fullclean
-
-.DELETE_ON_ERROR:
-
-all: build test
+all: test
 
 lib/version.js: package.json
-	$(NODE) src/version.js > $@
+	@src/release/make-version.js > $@
 
-build: build/$(MODULE_JS) build/$(MODULE_MIN_JS) build/demo
+$(DIRS):
+	@mkdir -p $@
 
-build/demo: $(DEMO_BUILD_FILES)
+test: browser-test demo-test node-test
 
-build/demo/%: demo/%
-	mkdir -p $(@D)
-	sed 's|\.\./build/dagre-d3.js|../dagre-d3.js|' < $< > $@ 
+browser-test: $(BUILD_FILES)
+	$(KARMA) start --single-run $(KARMA_OPTS)
+	$(KARMA) start karma.core.conf.js --single-run $(KARMA_OPTS)
 
-build/$(MODULE_JS): browser.js node_modules $(SRC_FILES)
-	mkdir -p $(@D)
-	$(BROWSERIFY) $(BROWSERIFY_OPTS) -x node_modules/d3/index-browserify.js $< > $@
-
-build/$(MODULE_MIN_JS): build/$(MODULE_JS)
-	$(UGLIFY) $(UGLIFY_OPTS) $< > $@
-
-dist: build/$(MODULE_JS) build/$(MODULE_MIN_JS) build/demo | test
-	rm -rf $@
-	mkdir -p $@
-	cp -r $^ dist
-
-test: build demo-test lint
-
-demo-test: test/demo-test.js $(SRC_FILES) node_modules
+demo-test: test/demo-test.js | $(BUILD_FILES)
 	$(PHANTOMJS) $<
 
-lint: build/lint
+node-test: test/node-test.js | $(BUILD_FILES)
+	$(NODE) $<
 
-build/lint: browser.js $(SRC_FILES) $(TEST_FILES)
-	mkdir -p $(@D)
-	$(JSHINT) $?
-	touch $@
-	@echo
+bower.json: package.json src/release/make-bower.json.js
+	@src/release/make-bower.json.js > $@
+
+$(BUILD_DIR)/dist/$(MOD).js: index.js $(SRC_FILES) | $(BUILD_DIR)/dist
+	@$(BROWSERIFY) $< > $@ -s dagreD3
+
+$(BUILD_DIR)/dist/$(MOD).min.js: $(BUILD_DIR)/dist/$(MOD).js | $(BUILD_DIR)/dist
+	@$(UGLIFY) $< --comments '@license' --source-map --output $@
+
+$(BUILD_DIR)/dist/$(MOD).core.js: index.js $(SRC_FILES) | $(BUILD_DIR)/dist
+	@$(BROWSERIFY) $< > $@ --no-bundle-external -s dagreD3
+
+$(BUILD_DIR)/dist/$(MOD).core.min.js: $(BUILD_DIR)/dist/$(MOD).core.js | $(BUILD_DIR)/dist
+	@$(UGLIFY) $< --comments '@license' --source-map --output $@
+
+$(BUILD_DIR)/dist/demo/%: demo/% | $(BUILD_DIR)/dist/demo
+	@cp $< $@
+
+dist: $(BUILD_FILES) bower.json test
+	@rm -rf $@
+	@mkdir -p $@
+	@cp -r $(BUILD_DIR)/dist/* $@
 
 release: dist
-	src/release/release.sh $(MODULE) dist
+	@echo
+	@echo Starting release...
+	@echo
+	@src/release/release.sh $(MOD) dist
 
 clean:
-	rm -rf build dist
-
-fullclean: clean
-	rm -rf ./node_modules
-	rm -f lib/version.js
+	rm -rf $(BUILD_DIR)
+	rm -rf $(DIST_DIR)/demo
 
 node_modules: package.json
-	$(NPM) install
-	touch node_modules
+	@$(NPM) install
+	@touch $@
